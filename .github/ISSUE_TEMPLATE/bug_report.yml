@@ -1,0 +1,49 @@
+name: Bug report
+description: Something isn't working
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! Please **download diagnostics** first:
+        Settings → Devices & services → Blink Plus → ⋮ → Download diagnostics
+        (tokens, serials and e-mail are redacted automatically).
+  - type: input
+    id: version
+    attributes:
+      label: Blink Plus version
+      placeholder: "0.2.0"
+    validations:
+      required: true
+  - type: input
+    id: ha
+    attributes:
+      label: Home Assistant version
+      placeholder: "2026.10.1"
+    validations:
+      required: true
+  - type: input
+    id: devices
+    attributes:
+      label: Blink devices involved
+      placeholder: "Video Doorbell (battery), Outdoor 4 on Sync Module 2 with USB"
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: attrs
+    attributes:
+      label: Camera attributes
+      description: "`live_view_state`, `live_view_last_error`, `live_view_cooldown_s`, `live_view_viewers`"
+      render: yaml
+  - type: textarea
+    id: logs
+    attributes:
+      label: Debug log
+      description: |
+        With `logger: logs: custom_components.blink_plus: debug` enabled.
+      render: text

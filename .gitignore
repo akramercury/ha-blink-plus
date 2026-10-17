@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.DS_Store
+*.zip
+# test fixtures generated locally / in CI
+tests/sample.ts
+tests/out_*.ts
+tests/*.pem

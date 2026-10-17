@@ -1,0 +1,26 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  zip:
+    name: Attach blink_plus.zip
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set version from tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          jq --arg v "$VERSION" '.version = $v' custom_components/blink_plus/manifest.json > m.json
+          mv m.json custom_components/blink_plus/manifest.json
+      - name: Zip integration
+        working-directory: custom_components/blink_plus
+        run: zip -r ../../blink_plus.zip . -x "__pycache__/*"
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: blink_plus.zip

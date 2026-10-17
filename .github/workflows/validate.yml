@@ -1,0 +1,54 @@
+name: Validate
+
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  hacs:
+    name: HACS validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: hacs/action@main
+        with:
+          category: integration
+          # Brand images ship inside the integration (custom_components/blink_plus/brand,
+          # Home Assistant 2026.3+), not in home-assistant/brands.
+          ignore: brands
+
+  hassfest:
+    name: Hassfest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: home-assistant/actions/hassfest@master
+
+  tests:
+    name: Offline stream tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Prepare fixtures
+        working-directory: tests
+        run: |
+          ffmpeg -loglevel error -f lavfi -i testsrc=size=640x360:rate=15 -f lavfi -i sine \
+            -t 6 -c:v libx264 -g 15 -pix_fmt yuv420p -c:a aac -f mpegts sample.ts
+          openssl req -x509 -newkey rsa:2048 -nodes -keyout key.pem -out cert.pem \
+            -days 2 -subj /CN=immis.test
+      - name: Stream, token fallback, preemption, failure handling
+        working-directory: tests
+        run: |
+          python3 test_immis.py . ../custom_components/blink_plus/immis.py token_ok
+          python3 test_immis.py . ../custom_components/blink_plus/immis.py null_only
+          python3 test_preempt.py . ../custom_components/blink_plus/immis.py
+          python3 test_failure.py . ../custom_components/blink_plus/immis.py
