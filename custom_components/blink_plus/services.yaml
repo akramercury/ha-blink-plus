@@ -1,0 +1,43 @@
+# Describes the format for available Blink services
+
+record:
+  target:
+    entity:
+      integration: blink_plus
+      domain: camera
+
+trigger_camera:
+  target:
+    entity:
+      integration: blink_plus
+      domain: camera
+
+save_video:
+  target:
+    entity:
+      integration: blink_plus
+      domain: camera
+  fields:
+    filename:
+      required: true
+      example: "/tmp/video.mp4"
+      selector:
+        text:
+
+save_recent_clips:
+  target:
+    entity:
+      integration: blink_plus
+      domain: camera
+  fields:
+    file_path:
+      required: true
+      example: "/tmp"
+      selector:
+        text:
+
+stop_live_view:
+  target:
+    entity:
+      integration: blink_plus
+      domain: camera

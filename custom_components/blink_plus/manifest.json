@@ -1,0 +1,23 @@
+{
+  "domain": "blink_plus",
+  "name": "Blink Plus",
+  "after_dependencies": [
+    "ffmpeg",
+    "stream"
+  ],
+  "codeowners": [
+    "@akramercury"
+  ],
+  "config_flow": true,
+  "documentation": "https://github.com/akramercury/ha-blink-plus",
+  "integration_type": "hub",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/akramercury/ha-blink-plus/issues",
+  "loggers": [
+    "blinkpy"
+  ],
+  "requirements": [
+    "blinkpy>=0.25.5"
+  ],
+  "version": "0.2.0"
+}

@@ -1,0 +1,167 @@
+{
+  "config": {
+    "abort": {
+      "already_configured": "Device is already configured",
+      "reauth_successful": "Re-authentication was successful",
+      "reconfigure_successful": "Re-configuration was successful"
+    },
+    "error": {
+      "cannot_connect": "Failed to connect",
+      "invalid_access_token": "Invalid access token",
+      "invalid_auth": "Blink rejected the email or password. Use the email address of your Blink account (not a nickname).",
+      "unknown": "Unexpected error",
+      "invalid_email": "Enter the email address you use to sign in to the Blink app.",
+      "invalid_2fa": "Blink rejected that code. Use the newest code from the latest email/SMS.",
+      "rate_limited": "Blink is rate-limiting logins for this account. Wait 15\u201330 minutes before trying again (every attempt resets the timer).",
+      "blink_error": "Blink login failed, see the details above and the log."
+    },
+    "step": {
+      "2fa": {
+        "data": {
+          "pin": "Two-factor code"
+        },
+        "description": "Enter the code Blink just sent you by email or SMS.\n\n{detail}",
+        "title": "Two-factor authentication"
+      },
+      "reauth_confirm": {
+        "data": {
+          "password": "Password",
+          "username": "Email"
+        },
+        "description": "The credentials for {username} need to be updated.\n\n{detail}",
+        "title": "Re-authenticate Blink"
+      },
+      "reconfigure": {
+        "data": {
+          "password": "Password",
+          "username": "Email"
+        },
+        "description": "{detail}"
+      },
+      "user": {
+        "data": {
+          "password": "Password",
+          "username": "Email"
+        },
+        "title": "Sign in with Blink account",
+        "description": "Sign in with the **email address** and password you use in the Blink app.\n\n{detail}"
+      }
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "camera_armed": {
+        "name": "Camera armed"
+      }
+    },
+    "sensor": {
+      "wifi_strength": {
+        "name": "Wi-Fi signal strength"
+      }
+    },
+    "switch": {
+      "camera_motion": {
+        "name": "Camera motion detection"
+      }
+    }
+  },
+  "exceptions": {
+    "cant_write": {
+      "message": "Can't write to file, check logs for details."
+    },
+    "failed_arm": {
+      "message": "Blink failed to arm camera."
+    },
+    "failed_arm_motion": {
+      "message": "Blink failed to arm camera motion detection."
+    },
+    "failed_clip": {
+      "message": "Blink failed to record a clip."
+    },
+    "failed_disarm": {
+      "message": "Blink failed to disarm camera."
+    },
+    "failed_disarm_motion": {
+      "message": "Blink failed to disarm camera motion detection."
+    },
+    "failed_snap": {
+      "message": "Blink failed to snap a picture."
+    },
+    "integration_not_found": {
+      "message": "Integration \"{target}\" not found in registry."
+    },
+    "migration_reauth_required": {
+      "message": "Cannot migrate configuration entry from version {version}, re-authentication is required"
+    },
+    "no_path": {
+      "message": "Can't write to directory {target}, no access to path!"
+    },
+    "not_loaded": {
+      "message": "{target} is not loaded."
+    }
+  },
+  "issues": {
+    "service_deprecation": {
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "description": "Blink update service is deprecated and will be removed.\nPlease update your automations and scripts to use `Home Assistant Core Integration: Update entity`.",
+            "title": "Blink update service is being removed"
+          }
+        }
+      },
+      "title": "Blink update service is being removed"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Blink Plus options",
+        "description": "Polling and live view settings. Live view only runs while something is watching the stream (a dashboard, Apple Home, go2rtc...).",
+        "data": {
+          "scan_interval": "Scan interval (seconds)",
+          "stream_host": "Live view listen address (0.0.0.0 lets go2rtc/Frigate on other hosts connect)",
+          "stream_base_port": "First live view TCP port (0 = random; set e.g. 18550 for fixed ports per camera)",
+          "stream_max_minutes": "Max live view minutes per viewing (0 = unlimited, uses more battery)",
+          "stream_linger": "Seconds to keep the session after the last viewer leaves",
+          "stream_token_mode": "Live view auth token (auto recommended)",
+          "usb_motion_minutes": "Check the USB clip list for motion every N minutes (0 = never; any other value can make the Blink app show 'system busy' while it runs)"
+        }
+      }
+    }
+  },
+  "services": {
+    "record": {
+      "description": "Requests camera to record a clip.",
+      "name": "Record"
+    },
+    "save_recent_clips": {
+      "description": "Saves all recent video clips to local directory with file pattern \"%Y%m%d_%H%M%S_[camera name].mp4\".",
+      "fields": {
+        "file_path": {
+          "description": "Directory name of writable path (directory may need to be included in allowlist_external_dirs in config).",
+          "name": "Output directory"
+        }
+      },
+      "name": "Save recent clips"
+    },
+    "save_video": {
+      "description": "Saves last recorded video clip to local file.",
+      "fields": {
+        "filename": {
+          "description": "Filename to writable path (directory may need to be included in allowlist_external_dirs in config).",
+          "name": "File name"
+        }
+      },
+      "name": "Save video"
+    },
+    "trigger_camera": {
+      "description": "Requests camera to take new image.",
+      "name": "Trigger camera"
+    },
+    "stop_live_view": {
+      "name": "Stop live view",
+      "description": "Ends the Blink live view session for this camera now (saves battery)."
+    }
+  }
+}

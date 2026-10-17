@@ -1,0 +1,16 @@
+Blink Plus for Home Assistant
+Copyright 2026 Akram Mahmoud (@akramercury) and contributors
+
+This project is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+Portions are derived from the Home Assistant "blink" integration
+(homeassistant/components/blink), Copyright Home Assistant contributors,
+licensed under the Apache License, Version 2.0.
+
+Uses blinkpy (https://github.com/fronzbot/blinkpy), MIT License.
+The IMMIS framing was first documented by blinkpy and blink-liveview-middleware.
+
+"Blink" is a trademark of Amazon.com, Inc. or its affiliates. This project is
+not affiliated with, endorsed by, or sponsored by Blink or Amazon. The Blink
+Plus logo is original artwork and does not use any Blink or Home Assistant
+branding.
