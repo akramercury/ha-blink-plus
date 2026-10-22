@@ -136,7 +136,7 @@
           "usb_motion_minutes": "Check the USB clip list for motion every N minutes (0 = never; any other value can make the Blink app show 'system busy' while it runs)",
           "archive_folder": "Copy USB clips to this folder (empty = off). Use /media/... \u2013 e.g. a PC share added under Settings \u2192 System \u2192 Storage",
           "archive_interval_minutes": "Copy new clips every N minutes (0 = only with the button / action)",
-          "archive_lookback_hours": "Only copy clips from the last N hours (0 = everything on the drive)"
+          "archive_lookback_hours": "Only copy clips from the last N hours (after the first run, which always copies everything; 0 = no limit)"
         }
       }
     }
@@ -187,6 +187,10 @@
           "description": "Stop after this many clips; the rest are copied next run."
         }
       }
+    },
+    "reset_archive": {
+      "name": "Reset clip archive",
+      "description": "Forgets which clips were already copied to the current archive folder, so the next run copies them again (within the look-back window)."
     }
   }
 }

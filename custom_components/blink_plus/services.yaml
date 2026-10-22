@@ -57,3 +57,5 @@ archive_clips:
         number:
           min: 1
           max: 500
+
+reset_archive:

@@ -87,14 +87,17 @@ async def main():
     hass = Hass()
     a = archive.ClipArchiver(hass, Coord(), "entry1", folder); await a.async_load()
 
-    r1 = await a.async_run(hours=24)
+    # existing 0.3.0 install: old single memory list must NOT block the copy
+    _DB["blink_plus.entry1.archive"] = {"saved": {"42": [101, 102, 99]}, "saved_total": 3}
+    a = archive.ClipArchiver(hass, Coord(), "entry1", folder); await a.async_load()
+    r1 = await a.async_run(hours=24)   # first run into this folder -> everything, look-back ignored
     files = sorted(os.path.relpath(os.path.join(dp, f), folder) for dp, _, fs in os.walk(folder) for f in fs)
-    print("run1:", r1, files)
-    assert r1["saved"] == 2, r1
-    assert len(files) == 2 and all(f.endswith(".mp4") for f in files), files
+    print("run1 (first full copy):", r1, files)
+    assert r1["saved"] == 3 and "first full copy" in r1["result"], r1
+    assert len(files) == 3 and all(f.endswith(".mp4") for f in files), files
     assert any(f.startswith("Front Door/") for f in files) and any(f.startswith("Backyard/") for f in files)
-    assert not any("99" in open(os.path.join(folder, f), "rb").read().decode() for f in files), "3-day-old clip copied"
-    assert [e[1]["camera"] for e in hass.bus.events] == ["Front Door", "Backyard"], "not oldest-first / events missing"
+    assert any("99" in open(os.path.join(folder, f), "rb").read().decode() for f in files), "old clip not copied on first run"
+    assert [e[1]["camera"] for e in hass.bus.events] == ["Front Door", "Front Door", "Backyard"], "not oldest-first"
 
     n_before = len(calls)
     r2 = await a.async_run(hours=24)
@@ -104,9 +107,9 @@ async def main():
 
     # remembered across restarts (Store)
     b = archive.ClipArchiver(hass, Coord(), "entry1", folder); await b.async_load()
-    r3 = await b.async_run(hours=0)   # 0 = everything on the drive -> only the 3-day-old clip is new
-    print("run3 (all clips, after restart):", r3)
-    assert r3["saved"] == 1
+    r3 = await b.async_run(hours=0)
+    print("run3 (after restart, nothing new):", r3)
+    assert r3["saved"] == 0 and "first full copy" not in r3["result"]
 
     state["live"] = True
     r4 = await b.async_run(hours=0); print("live view running:", r4)
@@ -119,6 +122,7 @@ async def main():
     r5 = await b.async_run(hours=24); print("live view starts mid-run:", r5)
     assert r5["result"].startswith("paused") and r5["saved"] == 1
     print("status:", {k: b.status[k] for k in ("saved_total", "last_clip_camera", "last_result")})
+    assert b.status["saved_total"] == 4
     state["start_live_after"] = None
 
     # ---- with a subscription: cloud clips (+ USB). Cloud also works during live view.
@@ -141,6 +145,20 @@ async def main():
     print("all files:", files)
     assert any(f.startswith("Driveway/") for f in files)
     assert not any(f.endswith(".part") for f in files)
+
+    # ---- user points the archive at a NEW folder -> starts fresh, copies everything
+    folder2 = tempfile.mkdtemp()
+    c = archive.ClipArchiver(hass, Coord(), "entry1", folder2); await c.async_load()
+    r8 = await c.async_run(hours=24); print("new folder:", r8)
+    n_usb = len(CLIPS); assert r8["saved"] == n_usb + 1, f"expected {n_usb} USB + 1 cloud, got {r8}"
+    r9 = await c.async_run(hours=24); assert r9["saved"] == 0
+    # old folder's memory is untouched
+    d = archive.ClipArchiver(hass, Coord(), "entry1", folder); await d.async_load()
+    assert (await d.async_run(hours=24))["saved"] == 0, "old folder re-copied"
+    # ---- reset -> copies everything again into the same folder
+    await c.async_reset()
+    r10 = await c.async_run(hours=24); print("after reset:", r10)
+    assert r10["saved"] == n_usb + 1 and "first full copy" in r10["result"]
     print("PASS archive")
 
 asyncio.run(main())

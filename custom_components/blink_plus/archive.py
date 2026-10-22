@@ -74,6 +74,8 @@ class ClipArchiver:
             hass, STORE_VERSION, f"blink_plus.{entry_id}.archive"
         )
         self._saved: dict[str, list[int]] = {}
+        self._all: dict[str, Any] = {}
+        self._initial_done = False  # first run into a folder copies everything
         self._lock = asyncio.Lock()
         self.status: dict[str, Any] = {
             "state": "idle",
@@ -97,18 +99,39 @@ class ClipArchiver:
         return self.coordinator.api
 
     async def async_load(self) -> None:
-        """Load the list of clips already saved."""
+        """Load the clips already copied *to this folder*.
+
+        The memory is kept per folder: pointing the archive at a new folder
+        starts fresh, so everything in the look-back window is copied there.
+        (0.3.0 kept one list for all folders; that list is left behind.)
+        """
         data = await self._store.async_load() or {}
-        self._saved = {k: list(v) for k, v in data.get("saved", {}).items()}
-        self.status["saved_total"] = int(data.get("saved_total", 0))
+        self._all = dict(data.get("folders", {}))
+        if "saved" in data and "folders" not in data:
+            self._all["__0.3.0__"] = {"saved": data["saved"], "saved_total": 0}
+        mine = self._all.get(self.folder, {})
+        self._saved = {k: list(v) for k, v in mine.get("saved", {}).items()}
+        self.status["saved_total"] = int(mine.get("saved_total", 0))
+        self._initial_done = bool(mine.get("initial_done", False))
 
     async def _async_save_store(self) -> None:
-        await self._store.async_save(
-            {
-                "saved": {k: v[-MAX_REMEMBERED:] for k, v in self._saved.items()},
-                "saved_total": self.status["saved_total"],
-            }
-        )
+        self._all[self.folder] = {
+            "saved": {k: v[-MAX_REMEMBERED:] for k, v in self._saved.items()},
+            "saved_total": self.status["saved_total"],
+            "initial_done": self._initial_done,
+        }
+        await self._store.async_save({"folders": self._all})
+
+    async def async_reset(self) -> None:
+        """Forget what was copied to this folder (next run copies again)."""
+        if self._lock.locked():
+            raise RuntimeError("archive is running, try again when it's done")
+        self._saved = {}
+        self._initial_done = False
+        self.status.update(saved_total=0, last_clip=None, last_clip_path=None,
+                           last_clip_camera=None, last_result="memory reset")
+        await self._async_save_store()
+        self._notify()
 
     def _notify(self) -> None:
         for listener in list(self.listeners):
@@ -132,6 +155,13 @@ class ClipArchiver:
             self._notify()
             result = "done"
             self._run_saved = 0
+            full_copy = not self._initial_done
+            if full_copy:
+                # First run into this folder: everything on the drive / in the
+                # cloud, no look-back and no per-run cap.
+                hours, max_clips = 0, 100_000
+                self.status["state"] = "running (first full copy)"
+                self._notify()
             try:
                 notes = []
                 cloud_found = await self._archive_cloud(hours, max_clips)
@@ -153,6 +183,10 @@ class ClipArchiver:
                     )
                 if self._run_saved >= max_clips:
                     notes.append(f"stopped at {max_clips} clips, more next run")
+                if full_copy:
+                    notes.insert(0, "first full copy")
+                    if not any(n.startswith("USB skipped") for n in notes):
+                        self._initial_done = True
                 result = "done" + (f" ({'; '.join(notes)})" if notes else "")
             except _LiveViewStarted:
                 result = "paused: a live view started"

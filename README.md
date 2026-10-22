@@ -135,9 +135,9 @@ The share now appears inside Home Assistant as `/media/blink`.
 |---|---|---|
 | Copy USB clips to this folder | `/media/blink` | Empty = archive off |
 | Copy new clips every N minutes | `60` | `0` = only with the button or action |
-| Only copy clips from the last N hours | `24` | `0` = everything (first full copy) |
+| Only copy clips from the last N hours | `24` | For runs after the first one (the first run into a folder always copies everything). `0` = no limit |
 
-Then press **Archive clips now** (on the *Blink Plus* device) for a first run, or wait for the schedule. The **Last archived clip** sensor shows progress, counts, the last file and any error.
+Then press **Archive clips now** (on the *Blink Plus* device) for a first run, or wait for the schedule. **The first run into a folder copies everything** on the USB stick and in the cloud. After that only new clips are copied. Changed folders? The new folder gets its own full copy. To copy everything again into the same folder, run `blink_plus.reset_archive`. The **Last archived clip** sensor shows progress, counts, the last file and any error.
 
 > [!TIP]
 > No subscription? Copying from the USB stick uses the sync module, so the Blink app may briefly say *"system busy"* while a clip is being copied. Running every 60 minutes (or overnight with an automation calling `blink_plus.archive_clips`) keeps that out of your way.
@@ -237,6 +237,7 @@ After you close a camera in HA, it's released within about **35 seconds** (HA ke
 |---|---|
 | `blink_plus.stop_live_view` | End a camera's live view now |
 | `blink_plus.archive_clips` | Copy new clips to the archive folder now (`hours`, `max_clips`); returns a summary |
+| `blink_plus.reset_archive` | Forget what was copied to the current folder; the next run copies everything again |
 | `blink_plus.trigger_camera` | Take a new snapshot (wakes the camera) |
 | `blink_plus.record` | Record a clip |
 | `blink_plus.save_video` | Save the last clip to a file |

@@ -2,6 +2,15 @@
 
 All notable changes to Blink Plus. The project follows [Semantic Versioning](https://semver.org/). It's pre-1.0, so options and behaviour may still change between minor versions.
 
+## [0.3.1] - 2026-10-22
+
+### Changed
+- **The first run into a folder copies everything** on the USB drive and in the cloud: no look-back, no per-run cap. After that only new clips are copied. An interrupted first copy (e.g. by a live view) carries on next run.
+- The "already copied" memory is now kept **per folder**. Pointing the archive at a new folder starts fresh, and 0.3.0's single list no longer blocks copies.
+
+### Added
+- `blink_plus.reset_archive` action: forget what was copied to the current folder, so the next run copies everything again
+
 ## [0.3.0] - 2026-10-22
 
 ### Added

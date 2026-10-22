@@ -37,6 +37,9 @@
     },
     "archive_clips": {
       "service": "mdi:folder-download"
+    },
+    "reset_archive": {
+      "service": "mdi:folder-refresh"
     }
   }
 }

@@ -21,6 +21,7 @@ SERVICE_SAVE_VIDEO = "save_video"
 SERVICE_SAVE_RECENT_CLIPS = "save_recent_clips"
 SERVICE_STOP_LIVE_VIEW = "stop_live_view"
 SERVICE_ARCHIVE_CLIPS = "archive_clips"
+SERVICE_RESET_ARCHIVE = "reset_archive"
 
 
 @callback
@@ -98,3 +99,12 @@ def async_setup_services(hass: HomeAssistant) -> None:
         ),
         supports_response=SupportsResponse.OPTIONAL,
     )
+
+    async def _reset_archive(call: ServiceCall) -> None:
+        """Forget which clips were copied, so the next run copies them again."""
+        for entry in hass.config_entries.async_loaded_entries(DOMAIN):
+            archiver = getattr(entry.runtime_data, "archiver", None)
+            if archiver is not None:
+                await archiver.async_reset()
+
+    hass.services.async_register(DOMAIN, SERVICE_RESET_ARCHIVE, _reset_archive)
