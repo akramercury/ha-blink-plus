@@ -45,6 +45,7 @@ class BlinkUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # serial -> BlinkLiveViewServer, filled in by __init__.async_setup_entry
         self.live_servers: dict[str, Any] = {}
         self._skip_next_refresh = True
+        self.archiver: Any = None  # ClipArchiver when an archive folder is set
         super().__init__(
             hass,
             _LOGGER,

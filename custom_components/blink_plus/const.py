@@ -27,6 +27,7 @@ TYPE_WIFI_STRENGTH = "wifi_strength"
 PLATFORMS = [
     Platform.ALARM_CONTROL_PANEL,
     Platform.BINARY_SENSOR,
+    Platform.BUTTON,
     Platform.CAMERA,
     Platform.SENSOR,
     Platform.SWITCH,
@@ -45,3 +46,11 @@ DEFAULT_STREAM_LINGER = 5
 DEFAULT_STREAM_TOKEN_MODE = "auto"
 CONF_USB_MOTION_MINUTES = "usb_motion_minutes"
 DEFAULT_USB_MOTION_MINUTES = 0  # 0 = never read the USB clip list (app keeps working)
+
+# Clip archive (copy USB clips to a folder, e.g. a PC share mounted under /media)
+CONF_ARCHIVE_FOLDER = "archive_folder"
+CONF_ARCHIVE_INTERVAL = "archive_interval_minutes"
+CONF_ARCHIVE_HOURS = "archive_lookback_hours"
+DEFAULT_ARCHIVE_FOLDER = ""  # empty = archive off
+DEFAULT_ARCHIVE_INTERVAL = 60  # minutes, 0 = only via button/action
+DEFAULT_ARCHIVE_HOURS = 24

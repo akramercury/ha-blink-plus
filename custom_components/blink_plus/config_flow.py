@@ -30,12 +30,18 @@ from .auth import (
 from .session import async_blink_session
 
 from .const import (
+    CONF_ARCHIVE_FOLDER,
+    CONF_ARCHIVE_HOURS,
+    CONF_ARCHIVE_INTERVAL,
     CONF_STREAM_BASE_PORT,
     CONF_STREAM_HOST,
     CONF_STREAM_LINGER,
     CONF_STREAM_MAX_MINUTES,
     CONF_STREAM_TOKEN_MODE,
     CONF_USB_MOTION_MINUTES,
+    DEFAULT_ARCHIVE_FOLDER,
+    DEFAULT_ARCHIVE_HOURS,
+    DEFAULT_ARCHIVE_INTERVAL,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_STREAM_BASE_PORT,
     DEFAULT_STREAM_HOST,
@@ -287,6 +293,9 @@ class BlinkOptionsFlow(OptionsFlow):
     ) -> ConfigFlowResult:
         """Show the options form."""
         if user_input is not None:
+            user_input[CONF_ARCHIVE_FOLDER] = (
+                user_input.get(CONF_ARCHIVE_FOLDER) or ""
+            ).strip()
             return self.async_create_entry(data=user_input)
         opts = self.config_entry.options
         return self.async_show_form(
@@ -327,6 +336,22 @@ class BlinkOptionsFlow(OptionsFlow):
                             CONF_USB_MOTION_MINUTES, DEFAULT_USB_MOTION_MINUTES
                         ),
                     ): vol.All(vol.Coerce(int), vol.Range(min=0, max=1440)),
+                    vol.Optional(
+                        CONF_ARCHIVE_FOLDER,
+                        description={
+                            "suggested_value": opts.get(
+                                CONF_ARCHIVE_FOLDER, DEFAULT_ARCHIVE_FOLDER
+                            )
+                        },
+                    ): str,
+                    vol.Required(
+                        CONF_ARCHIVE_INTERVAL,
+                        default=opts.get(CONF_ARCHIVE_INTERVAL, DEFAULT_ARCHIVE_INTERVAL),
+                    ): vol.All(vol.Coerce(int), vol.Range(min=0, max=10080)),
+                    vol.Required(
+                        CONF_ARCHIVE_HOURS,
+                        default=opts.get(CONF_ARCHIVE_HOURS, DEFAULT_ARCHIVE_HOURS),
+                    ): vol.All(vol.Coerce(int), vol.Range(min=0, max=8760)),
                 }
             ),
         )

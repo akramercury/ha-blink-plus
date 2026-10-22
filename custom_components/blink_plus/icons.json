@@ -3,11 +3,19 @@
     "sensor": {
       "wifi_strength": {
         "default": "mdi:wifi"
+      },
+      "clip_archive": {
+        "default": "mdi:filmstrip-box-multiple"
       }
     },
     "switch": {
       "camera_motion": {
         "default": "mdi:motion-sensor"
+      }
+    },
+    "button": {
+      "archive_now": {
+        "default": "mdi:folder-download"
       }
     }
   },
@@ -26,6 +34,9 @@
     },
     "stop_live_view": {
       "service": "mdi:video-off"
+    },
+    "archive_clips": {
+      "service": "mdi:folder-download"
     }
   }
 }

@@ -36,6 +36,7 @@ It speaks Blink's own live view protocol (**IMMIS**), reverse engineered from th
 | 🧠 **Sync-module friendly** | One live view per system, no polling during live view, no background USB scans, never retries a failing camera. The Blink app keeps working |
 | 🔐 **Login that works in 2026** | OAuth v2 + PKCE, 2FA (email/SMS), per-install device ID, token refresh, and clear error messages |
 | 📊 **Everything from the built-in integration** | Alarm panel (arm/disarm), motion, battery, temperature, Wi-Fi, motion detection switch, snapshots, clip saving |
+| 💾 **Clip archive** | Copies clips to a folder or straight onto your PC, **with or without a Blink plan** (cloud clips or Sync Module USB clips) |
 | 🩺 **Diagnostics** | Per-camera live view state and the reason for any failure, plus a log of the last 150 Blink API calls |
 | 🖼️ **Proper branding** | Icon and logo show in Home Assistant 2026.3+ |
 
@@ -93,6 +94,67 @@ Or by hand:
 | Linger | `5` s | Keeps the session this long after the last viewer leaves (quick re-open) |
 | Live view token mode | `auto` | `auto` uses the app's `liveview_token` and falls back to zeros. Change it only if support asks you to |
 | USB clip list check (minutes) | `0` (off) | Reads the Sync Module 2 USB clip list for motion. **Any value can make the Blink app show "system busy"** while it runs |
+
+## Clip archive: copy your videos to your PC
+
+Blink Plus can copy every new clip into a folder on its own. Point that folder at a share on your PC, and your Blink videos land on your computer automatically, organised by camera and day:
+
+```
+Blink/
+├── Front Door/
+│   └── 2026-10-22/
+│       ├── Front Door_2026-10-22_08-14-03.mp4
+│       └── Front Door_2026-10-22_17-42-51.mp4
+└── Driveway/
+    └── 2026-10-22/
+        └── Driveway_2026-10-22_12-05-37.mp4
+```
+
+| Your setup | Where clips come from | Effect on the sync module |
+|---|---|---|
+| **Blink subscription** | Blink's cloud | None. It even runs during live view |
+| **No subscription**, Sync Module 2 + USB stick | The USB stick (the sync module uploads each clip, then Blink Plus downloads it) | One clip at a time, with pauses. Never during live view; it stops if you open one |
+| Both | Both, automatically | |
+
+### 1. Share a folder from your PC
+*Windows:* create a folder (e.g. `D:\Blink`) → right-click → **Properties → Sharing → Advanced Sharing** → share it as `Blink` and give your Windows user *Change* permission.
+
+### 2. Add it to Home Assistant
+**Settings → System → Storage → Add network storage**
+* Name: `blink` · Usage: **Media** · Server: your PC's IP · Protocol: **Samba/Windows (CIFS)**
+* Remote share: `Blink` · your Windows username and password
+
+The share now appears inside Home Assistant as `/media/blink`.
+
+> Network storage needs Home Assistant OS or Supervised. On other installs, use any folder under `/media` (or one listed in `allowlist_external_dirs`) and reach it however suits you, e.g. the Samba add-on.
+
+### 3. Turn on the archive
+**Settings → Devices & services → Blink Plus → Configure**
+
+| Option | Example | |
+|---|---|---|
+| Copy USB clips to this folder | `/media/blink` | Empty = archive off |
+| Copy new clips every N minutes | `60` | `0` = only with the button or action |
+| Only copy clips from the last N hours | `24` | `0` = everything (first full copy) |
+
+Then press **Archive clips now** (on the *Blink Plus* device) for a first run, or wait for the schedule. The **Last archived clip** sensor shows progress, counts, the last file and any error.
+
+> [!TIP]
+> No subscription? Copying from the USB stick uses the sync module, so the Blink app may briefly say *"system busy"* while a clip is being copied. Running every 60 minutes (or overnight with an automation calling `blink_plus.archive_clips`) keeps that out of your way.
+
+**Automation idea:** get a phone notification with the camera name whenever a clip lands on your PC:
+
+```yaml
+automation:
+  - alias: Blink clip saved
+    triggers:
+      - trigger: event
+        event_type: blink_plus_clip_saved
+    actions:
+      - action: notify.mobile_app_my_phone
+        data:
+          message: "New {{ trigger.event.data.camera }} clip saved"
+```
 
 ## Apple Home / Apple TV
 
@@ -169,11 +231,12 @@ After you close a camera in HA, it's released within about **35 seconds** (HA ke
 
 ## Entities, actions and attributes
 
-**Entities per camera:** camera (with streaming), motion, battery, temperature, Wi-Fi signal, motion-detection switch. **Per system:** alarm control panel (arm / disarm).
+**Entities per camera:** camera (with streaming), motion, battery, temperature, Wi-Fi signal, motion-detection switch. **Per system:** alarm control panel (arm / disarm). **With the clip archive on:** *Archive clips now* button and *Last archived clip* sensor.
 
 | Action | |
 |---|---|
 | `blink_plus.stop_live_view` | End a camera's live view now |
+| `blink_plus.archive_clips` | Copy new clips to the archive folder now (`hours`, `max_clips`); returns a summary |
 | `blink_plus.trigger_camera` | Take a new snapshot (wakes the camera) |
 | `blink_plus.record` | Record a clip |
 | `blink_plus.save_video` | Save the last clip to a file |
@@ -233,6 +296,7 @@ logger:
 - [x] Apple Home / Apple TV via HomeKit Bridge
 - [x] Sync-module protection
 - [ ] **Push notifications** (Firebase, like the app): instant doorbell press events and motion/person/vehicle detection, without polling
+- [x] Clip archive to a folder / PC (cloud and USB)
 - [ ] Snooze, chime test, lights, Mini-as-chime
 - [ ] Two-way talk
 

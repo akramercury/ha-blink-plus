@@ -4,7 +4,13 @@ import voluptuous as vol
 
 from homeassistant.components.camera import DOMAIN as CAMERA_DOMAIN
 from homeassistant.const import CONF_FILE_PATH, CONF_FILENAME
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import (
+    HomeAssistant,
+    ServiceCall,
+    ServiceResponse,
+    SupportsResponse,
+    callback,
+)
 from homeassistant.helpers import config_validation as cv, service
 
 from .const import DOMAIN
@@ -14,6 +20,7 @@ SERVICE_TRIGGER = "trigger_camera"
 SERVICE_SAVE_VIDEO = "save_video"
 SERVICE_SAVE_RECENT_CLIPS = "save_recent_clips"
 SERVICE_STOP_LIVE_VIEW = "stop_live_view"
+SERVICE_ARCHIVE_CLIPS = "archive_clips"
 
 
 @callback
@@ -59,4 +66,35 @@ def async_setup_services(hass: HomeAssistant) -> None:
         entity_domain=CAMERA_DOMAIN,
         schema=None,
         func="stop_live_view",
+    )
+
+    async def _archive_clips(call: ServiceCall) -> ServiceResponse:
+        """Copy new USB clips to the archive folder of every Blink Plus account."""
+        results = {}
+        for entry in hass.config_entries.async_loaded_entries(DOMAIN):
+            archiver = getattr(entry.runtime_data, "archiver", None)
+            if archiver is None:
+                results[entry.title] = {"result": "archive folder not set (Options)"}
+                continue
+            results[entry.title] = await archiver.async_run(
+                hours=float(call.data.get("hours", 24)),
+                max_clips=int(call.data.get("max_clips", 25)),
+            )
+        return results
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_ARCHIVE_CLIPS,
+        _archive_clips,
+        schema=vol.Schema(
+            {
+                vol.Optional("hours", default=24): vol.All(
+                    vol.Coerce(float), vol.Range(min=0, max=24 * 365)
+                ),
+                vol.Optional("max_clips", default=25): vol.All(
+                    vol.Coerce(int), vol.Range(min=1, max=500)
+                ),
+            }
+        ),
+        supports_response=SupportsResponse.OPTIONAL,
     )

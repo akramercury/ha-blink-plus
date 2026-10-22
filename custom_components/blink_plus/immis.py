@@ -246,6 +246,8 @@ class BlinkLiveViewServer:
         self._blocked_until: float = 0.0
         self._relay_hung_up = False
         self.on_preempt: Callable[[], None] | None = None
+        # Returns True while something else (clip archive) has the sync module busy
+        self.sync_busy: Callable[[], bool] | None = None
 
     # ------------------------------------------------------------------ server
     @property
@@ -418,6 +420,16 @@ class BlinkLiveViewServer:
 
     async def _session_loop(self) -> None:
         """Keep Blink sessions running while anyone is connected."""
+        # Let a clip upload that's already running finish first (max 45 s),
+        # instead of colliding with it and getting "system busy".
+        waited = 0
+        while self.sync_busy and self.sync_busy() and waited < 45 and self._clients:
+            if waited == 0:
+                self.stats.state = "starting"
+                self._changed()
+                _LOGGER.debug("%s: waiting for clip archive to free the sync module", self.name)
+            await asyncio.sleep(1)
+            waited += 1
         await self._claim_network()
         intent = "liveview"
         started = time.monotonic()

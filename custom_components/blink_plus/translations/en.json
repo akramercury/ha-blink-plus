@@ -57,11 +57,19 @@
     "sensor": {
       "wifi_strength": {
         "name": "Wi-Fi signal strength"
+      },
+      "clip_archive": {
+        "name": "Last archived clip"
       }
     },
     "switch": {
       "camera_motion": {
         "name": "Camera motion detection"
+      }
+    },
+    "button": {
+      "archive_now": {
+        "name": "Archive clips now"
       }
     }
   },
@@ -125,7 +133,10 @@
           "stream_max_minutes": "Max live view minutes per viewing (0 = unlimited, uses more battery)",
           "stream_linger": "Seconds to keep the session after the last viewer leaves",
           "stream_token_mode": "Live view auth token (auto recommended)",
-          "usb_motion_minutes": "Check the USB clip list for motion every N minutes (0 = never; any other value can make the Blink app show 'system busy' while it runs)"
+          "usb_motion_minutes": "Check the USB clip list for motion every N minutes (0 = never; any other value can make the Blink app show 'system busy' while it runs)",
+          "archive_folder": "Copy USB clips to this folder (empty = off). Use /media/... \u2013 e.g. a PC share added under Settings \u2192 System \u2192 Storage",
+          "archive_interval_minutes": "Copy new clips every N minutes (0 = only with the button / action)",
+          "archive_lookback_hours": "Only copy clips from the last N hours (0 = everything on the drive)"
         }
       }
     }
@@ -162,6 +173,20 @@
     "stop_live_view": {
       "name": "Stop live view",
       "description": "Ends the Blink live view session for this camera now (saves battery)."
+    },
+    "archive_clips": {
+      "name": "Archive clips",
+      "description": "Copies new clips from the Sync Module USB drive to the archive folder (set in Blink Plus options). Pauses if a live view starts.",
+      "fields": {
+        "hours": {
+          "name": "Look back",
+          "description": "Only clips recorded in the last N hours (0 = all clips on the drive)."
+        },
+        "max_clips": {
+          "name": "Max clips",
+          "description": "Stop after this many clips; the rest are copied next run."
+        }
+      }
     }
   }
 }

@@ -57,6 +57,10 @@ async def async_setup_entry(
         for description in SENSOR_TYPES
     ]
 
+    if coordinator.archiver is not None:
+        from .archive_sensor import ClipArchiveSensor  # noqa: PLC0415
+
+        entities.append(ClipArchiveSensor(config_entry, coordinator.archiver))
     async_add_entities(entities)
 
 

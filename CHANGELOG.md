@@ -2,6 +2,18 @@
 
 All notable changes to Blink Plus. The project follows [Semantic Versioning](https://semver.org/). It's pre-1.0, so options and behaviour may still change between minor versions.
 
+## [0.3.0] - 2026-10-22
+
+### Added
+- **Clip archive**: copies your Blink clips to a folder automatically, e.g. a shared folder on your PC added to Home Assistant as network storage. It works **with or without a Blink subscription**:
+  - **Cloud clips** (subscription): downloaded straight from Blink's cloud. This never touches the sync module, so it also runs during live view.
+  - **USB clips** (Sync Module 2 local storage, no plan needed): copied one at a time, with pauses in between. It never runs during a live view and pauses as soon as one starts.
+  - Files are named `<folder>/<Camera>/<YYYY-MM-DD>/<Camera>_<YYYY-MM-DD_HH-MM-SS>.mp4` (local time)
+  - It remembers which clips were already copied, even across restarts, so nothing is copied twice
+  - Options: folder, interval (or manual only), look-back hours
+  - **Archive clips now** button, **Last archived clip** sensor (status, counts, last path, errors), `blink_plus.archive_clips` action (with a response), and a `blink_plus_clip_saved` event for automations
+- Live view waits (up to 45 s) for a USB clip upload that's already running, instead of colliding with it
+
 ## [0.2.0] - 2026-10-17
 First public release.
 

@@ -1,6 +1,7 @@
 """Support for Blink Home Camera System."""
 
 from copy import deepcopy
+from datetime import timedelta
 import logging
 import time
 from typing import Any
@@ -12,16 +13,22 @@ from homeassistant.const import CONF_SCAN_INTERVAL
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryError
 from homeassistant.helpers import config_validation as cv
-from homeassistant.helpers.event import async_call_later
+from homeassistant.helpers.event import async_call_later, async_track_time_interval
 from homeassistant.helpers.typing import ConfigType
 
 from .const import (
+    CONF_ARCHIVE_FOLDER,
+    CONF_ARCHIVE_HOURS,
+    CONF_ARCHIVE_INTERVAL,
     CONF_STREAM_BASE_PORT,
     CONF_STREAM_HOST,
     CONF_STREAM_LINGER,
     CONF_STREAM_MAX_MINUTES,
     CONF_STREAM_TOKEN_MODE,
     CONF_USB_MOTION_MINUTES,
+    DEFAULT_ARCHIVE_FOLDER,
+    DEFAULT_ARCHIVE_HOURS,
+    DEFAULT_ARCHIVE_INTERVAL,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_STREAM_BASE_PORT,
     DEFAULT_STREAM_HOST,
@@ -34,6 +41,7 @@ from .const import (
     PLATFORMS,
 )
 from .coordinator import BlinkConfigEntry, BlinkUpdateCoordinator
+from .archive import ClipArchiver
 from .auth import BlinkPlusAuth
 from .immis import BlinkLiveViewServer, live_key
 from .session import async_blink_session
@@ -133,6 +141,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: BlinkConfigEntry) -> boo
     coordinator.options_snapshot = dict(entry.options)
     entry.async_on_unload(entry.add_update_listener(_async_options_updated))
 
+    await _async_setup_archive(hass, entry, coordinator)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     # Run the first full (possibly slow) Blink refresh after setup has finished,
@@ -142,6 +151,41 @@ async def async_setup_entry(hass: HomeAssistant, entry: BlinkConfigEntry) -> boo
 
     entry.async_on_unload(async_call_later(hass, 20, _first_refresh))
     return True
+
+
+async def _async_setup_archive(
+    hass: HomeAssistant, entry: BlinkConfigEntry, coordinator: BlinkUpdateCoordinator
+) -> None:
+    """Copy USB clips to a folder on a schedule (if a folder is configured)."""
+    folder = (entry.options.get(CONF_ARCHIVE_FOLDER) or DEFAULT_ARCHIVE_FOLDER).strip()
+    if not folder:
+        return
+    archiver = ClipArchiver(hass, coordinator, entry.entry_id, folder)
+    await archiver.async_load()
+    coordinator.archiver = archiver
+    for server in coordinator.live_servers.values():
+        server.sync_busy = lambda: archiver.usb_busy
+    if not hass.config.is_allowed_path(folder):
+        archiver.status["last_error"] = (
+            f"{folder} is not an allowed folder. Use /media/... or add it to "
+            "allowlist_external_dirs"
+        )
+        _LOGGER.error("Blink clip archive: %s", archiver.status["last_error"])
+        archiver.enabled = False
+        return
+    hours = float(entry.options.get(CONF_ARCHIVE_HOURS, DEFAULT_ARCHIVE_HOURS))
+    minutes = int(entry.options.get(CONF_ARCHIVE_INTERVAL, DEFAULT_ARCHIVE_INTERVAL))
+    if minutes <= 0:
+        return
+
+    async def _scheduled(_now) -> None:
+        await archiver.async_run(hours=hours)
+
+    entry.async_on_unload(
+        async_track_time_interval(hass, _scheduled, timedelta(minutes=minutes))
+    )
+    # First run a few minutes after start-up, not during it.
+    entry.async_on_unload(async_call_later(hass, 180, _scheduled))
 
 
 async def _async_start_live_servers(
