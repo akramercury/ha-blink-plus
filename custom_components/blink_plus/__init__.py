@@ -163,6 +163,7 @@ async def _async_setup_archive(
     archiver = ClipArchiver(hass, coordinator, entry.entry_id, folder)
     await archiver.async_load()
     coordinator.archiver = archiver
+    entry.async_on_unload(archiver.cancel_resume)
     for server in coordinator.live_servers.values():
         server.sync_busy = lambda: archiver.usb_busy
     if not hass.config.is_allowed_path(folder):

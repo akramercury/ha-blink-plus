@@ -51,6 +51,11 @@ MANIFEST_RETRIES = 6
 DOWNLOAD_RETRIES = 3
 DOWNLOAD_TIMEOUT = 120  # s per clip
 MAX_REMEMBERED = 5000  # clip ids kept per sync module
+MAX_FAILS_IN_A_ROW = 5  # then give up this run (and retry later automatically)
+RESUME_AFTER_PAUSE = 120  # s, carry on after a live view interrupted the copy
+RESUME_AFTER_ERROR = 300  # s
+RESUME_AFTER_CAP = 30  # s, more clips waiting
+MAX_AUTO_RESUMES = 12  # in a row without progress
 
 CLIP_URL = string.Template(
     "/api/v1/accounts/$account_id/networks/$network_id/sync_modules/$sync_id"
@@ -87,11 +92,16 @@ class ClipArchiver:
             "saved_last_run": 0,
             "saved_total": 0,
             "last_error": None,
+            "next_auto_resume_s": None,
         }
         self.listeners: list = []
         self.enabled = True
         self._run_saved = 0
         self.usb_busy = False  # True while the sync module is uploading a clip for us
+        self._clip_error = ""
+        self._run_failed = 0
+        self._resume_handle = None
+        self._auto_resumes = 0
 
     @property
     def blink(self):
@@ -126,6 +136,7 @@ class ClipArchiver:
         """Forget what was copied to this folder (next run copies again)."""
         if self._lock.locked():
             raise RuntimeError("archive is running, try again when it's done")
+        self.cancel_resume()
         self._saved = {}
         self._initial_done = False
         self.status.update(saved_total=0, last_clip=None, last_clip_path=None,
@@ -155,6 +166,7 @@ class ClipArchiver:
             self._notify()
             result = "done"
             self._run_saved = 0
+            self._run_failed = 0
             full_copy = not self._initial_done
             if full_copy:
                 # First run into this folder: everything on the drive / in the
@@ -185,7 +197,9 @@ class ClipArchiver:
                     notes.append(f"stopped at {max_clips} clips, more next run")
                 if full_copy:
                     notes.insert(0, "first full copy")
-                    if not any(n.startswith("USB skipped") for n in notes):
+                    if self._run_failed:
+                        notes.append(f"{self._run_failed} clip(s) to retry")
+                    elif not any(n.startswith("USB skipped") for n in notes):
                         self._initial_done = True
                 result = "done" + (f" ({'; '.join(notes)})" if notes else "")
             except _LiveViewStarted:
@@ -205,7 +219,43 @@ class ClipArchiver:
                 await self._async_save_store()
                 self._notify()
             _LOGGER.info("Blink clip archive: %s, %d clip(s) saved", result, saved)
+            self._schedule_resume(result, saved, hours, max_clips, full_copy)
             return {"result": result, "saved": saved}
+
+    def _schedule_resume(self, result, saved, hours, max_clips, full_copy) -> None:
+        """Carry on by itself after a pause, an error, or the per-run cap."""
+        if result.startswith("paused"):
+            delay = RESUME_AFTER_PAUSE
+        elif result == "error":
+            delay = RESUME_AFTER_ERROR
+        elif "more next run" in result or (full_copy and not self._initial_done):
+            delay = RESUME_AFTER_CAP
+        else:
+            self._auto_resumes = 0
+            return
+        self._auto_resumes = 0 if saved else self._auto_resumes + 1
+        if self._auto_resumes > MAX_AUTO_RESUMES:
+            _LOGGER.warning("Blink clip archive: giving up auto-resume (no progress)")
+            self._auto_resumes = 0
+            return
+        self.cancel_resume()
+        self.status["next_auto_resume_s"] = delay
+        self._notify()
+
+        async def _resume(_now=None) -> None:
+            self._resume_handle = None
+            self.status["next_auto_resume_s"] = None
+            await self.async_run(hours=hours, max_clips=max_clips)
+
+        from homeassistant.helpers.event import async_call_later  # noqa: PLC0415
+
+        self._resume_handle = async_call_later(self.hass, delay, _resume)
+
+    def cancel_resume(self) -> None:
+        """Cancel a scheduled automatic resume (unload / reset)."""
+        if self._resume_handle:
+            self._resume_handle()
+            self._resume_handle = None
 
     def _local_storage_syncs(self) -> list:
         syncs = []
@@ -254,7 +304,12 @@ class ClipArchiver:
         todo.sort()
         for created, cid, camera, media in todo[: max(budget - self._run_saved, 0)]:
             url = f"{self.blink.urls.base_url}{media}"
-            path = await self._fetch_to_file(url, camera, created, cid)
+            try:
+                path = await self._fetch_to_file(url, camera, created, cid)
+            except Exception as err:  # noqa: BLE001
+                self._clip_error = f"{type(err).__name__}: {err}"
+                self.status["last_error"] = f"cloud clip {cid}: {self._clip_error}"
+                path = None
             if path is not None:
                 self._record_saved("cloud", cid, camera, created, path)
                 await self._async_save_store()
@@ -326,12 +381,41 @@ class ClipArchiver:
         _LOGGER.debug("%d new USB clip(s) to copy on %s", len(todo), sync.name)
 
         saved = 0
+        fails = 0
         for created, cid, camera in todo[:budget]:
             if self._live_active():
                 raise _LiveViewStarted
-            path = await self._download(sync, manifest_id, cid, camera, created)
+            try:
+                path = await self._download(sync, manifest_id, cid, camera, created)
+            except _LiveViewStarted:
+                raise
+            except Exception as err:  # noqa: BLE001  (one bad clip must not end the run)
+                self._clip_error = f"{type(err).__name__}: {err}"
+                path = None
             if path is None:
+                fails += 1
+                self._run_failed += 1
+                _LOGGER.warning(
+                    "Clip %s from %s not copied (%s), %d failed in a row",
+                    cid, camera, self._clip_error, fails,
+                )
+                self.status["last_error"] = f"clip {cid}: {self._clip_error}"
+                self._notify()
+                if fails >= MAX_FAILS_IN_A_ROW:
+                    raise RuntimeError(
+                        f"{fails} clips in a row failed, last: {self._clip_error}"
+                    )
+                if fails == 2:
+                    # Blink's clip list can expire during a long copy: get a new one.
+                    _LOGGER.debug("Refreshing the USB clip list")
+                    self.usb_busy = True
+                    try:
+                        manifest_id, _ = await self._manifest(sync)
+                    finally:
+                        self.usb_busy = False
+                await asyncio.sleep(PAUSE_BETWEEN_CLIPS * 3)
                 continue
+            fails = 0
             saved += 1
             self._record_saved(str(sync.sync_id), cid, camera, created, path)
             await self._async_save_store()
@@ -367,12 +451,22 @@ class ClipArchiver:
             response = await blink_api.http_get(
                 self.blink, url, json=False, timeout=DOWNLOAD_TIMEOUT
             )
-            if getattr(response, "status", None) == 200:
+            status = getattr(response, "status", None)
+            if status == 200:
                 data = await response.read()
                 if data:
-                    await self.hass.async_add_executor_job(_write, path, data)
+                    try:
+                        await self.hass.async_add_executor_job(_write, path, data)
+                    except OSError as err:
+                        self._clip_error = f"can't write to {path.parent}: {err}"
+                        raise
                     _LOGGER.debug("Saved %s (%d KB)", path, len(data) // 1024)
                     return path
+                self._clip_error = "empty download"
+            else:
+                self._clip_error = (
+                    f"download HTTP {status}" if status else "no response from Blink"
+                )
             await asyncio.sleep(3 * (attempt + 1))
         _LOGGER.warning("Could not download clip %s from %s", clip_id, camera)
         return None

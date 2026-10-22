@@ -2,6 +2,16 @@
 
 All notable changes to Blink Plus. The project follows [Semantic Versioning](https://semver.org/). It's pre-1.0, so options and behaviour may still change between minor versions.
 
+## [0.3.2] - 2026-10-22
+
+### Fixed
+- The clip archive no longer stops after a few clips:
+  - one clip that fails (sync module still busy, an expired clip list, a hiccup writing to the PC share) is skipped for now, and the run carries on
+  - after 2 failures in a row, a fresh clip list is fetched; after 5 in a row the run stops with a clear error
+  - runs **resume automatically**: 2 min after a live view interrupted them, 5 min after an error, right away when more clips are waiting. No more pressing the button again.
+  - the first full copy only counts as complete once every clip is copied; failed clips are retried
+- The **Last archived clip** sensor shows why a clip failed (`last_error`) and when the next automatic resume is (`next_auto_resume_s`)
+
 ## [0.3.1] - 2026-10-22
 
 ### Changed

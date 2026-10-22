@@ -8,7 +8,8 @@ CLIPS = [
     {"id": 102, "camera_name": "Backyard", "created_at": (NOW - dt.timedelta(hours=1)).isoformat(), "size": 1},
     {"id": 99, "camera_name": "FrontDoor", "created_at": (NOW - dt.timedelta(days=3)).isoformat(), "size": 1},
 ]
-state = {"live": False, "start_live_after": None}
+state = {"live": False, "start_live_after": None, "bad": set()}
+scheduled = []
 CLOUD = []   # empty = no subscription (Blink returns an empty media list)
 
 # ---- stubs: blinkpy.api + homeassistant bits ---------------------------------
@@ -31,6 +32,11 @@ async def http_get(blink, url, json=True, **kw):
     if "/manifest/request/555" in url:
         return {"manifest_id": "M1", "clips": CLIPS}
     cid = int(url.rsplit("/", 1)[1])
+    if cid in state["bad"]:
+        class Bad:
+            status = 500
+            async def read(self): return b""
+        return Bad()
     if state["start_live_after"] == cid:
         state["live"] = True
     class R:
@@ -51,6 +57,11 @@ class Store:
     async def async_load(self): return _DB.get(self.key)
     async def async_save(self, data): _DB[self.key] = data
 storage.Store = Store
+event = types.ModuleType("homeassistant.helpers.event")
+def async_call_later(hass, delay, fn):
+    scheduled.append(delay)
+    return lambda: None
+event.async_call_later = async_call_later
 util = types.ModuleType("homeassistant.util"); dtu = types.ModuleType("homeassistant.util.dt")
 dtu.UTC = dt.timezone.utc
 dtu.utcnow = lambda: dt.datetime.now(dt.timezone.utc)
@@ -58,11 +69,14 @@ dtu.parse_datetime = lambda s: dt.datetime.fromisoformat(s)
 dtu.as_local = lambda d: d.astimezone(dt.timezone(dt.timedelta(hours=-6)))
 util.dt = dtu
 for n, m in {"homeassistant": ha, "homeassistant.core": core, "homeassistant.helpers": helpers,
-             "homeassistant.helpers.storage": storage, "homeassistant.util": util, "homeassistant.util.dt": dtu}.items():
+             "homeassistant.helpers.storage": storage, "homeassistant.helpers.event": event, "homeassistant.util": util, "homeassistant.util.dt": dtu}.items():
     sys.modules[n] = m
 spec = importlib.util.spec_from_file_location("archive", ARCHIVE_PY)
 archive = importlib.util.module_from_spec(spec); sys.modules["archive"] = archive; spec.loader.exec_module(archive)
 archive.PAUSE_BETWEEN_CLIPS = 0
+_real_sleep = asyncio.sleep
+async def _fast_sleep(t, *a, **k): await _real_sleep(0)
+archive.asyncio.sleep = _fast_sleep   # no real waiting in retries
 
 class Bus:
     def __init__(self): self.events = []
@@ -159,6 +173,32 @@ async def main():
     await c.async_reset()
     r10 = await c.async_run(hours=24); print("after reset:", r10)
     assert r10["saved"] == n_usb + 1 and "first full copy" in r10["result"]
+
+    # ---- a clip that keeps failing must not end the run; others still copied
+    folder3 = tempfile.mkdtemp()
+    e = archive.ClipArchiver(hass, Coord(), "entry1", folder3); await e.async_load()
+    state["bad"] = {102}
+    manifests_before = sum(1 for c in calls if c[0] == "POST" and c[1].endswith("/manifest/request"))
+    r11 = await e.async_run(hours=24); print("one bad clip:", r11, "| last_error:", e.status["last_error"])
+    assert r11["saved"] == n_usb, "a single failing clip stopped the run"
+    assert "clip 102" in e.status["last_error"] and "HTTP 500" in e.status["last_error"]
+    # ---- 5 failing in a row -> run stops with a clear error and schedules a resume
+    CLIPS.extend({"id": 300 + i, "camera_name": "Backyard", "created_at": (NOW + dt.timedelta(minutes=i + 1)).isoformat(), "size": 1} for i in range(6))
+    state["bad"] = {300, 301, 302, 303, 304, 305}
+    scheduled.clear()
+    r12 = await e.async_run(hours=24); print("5 in a row fail:", r12, "| scheduled resume in", scheduled)
+    assert r12["result"] == "error" and scheduled == [archive.RESUME_AFTER_ERROR]
+    manifests_after = sum(1 for c in calls if c[0] == "POST" and c[1].endswith("/manifest/request"))
+    assert manifests_after - manifests_before >= 3, "clip list not refreshed after 2 failures"
+    # ---- paused by live view -> resume scheduled automatically
+    state["bad"] = set(); CLIPS.append({"id": 400, "camera_name": "Backyard", "created_at": (NOW + dt.timedelta(hours=1)).isoformat(), "size": 1})
+    CLIPS.append({"id": 401, "camera_name": "Backyard", "created_at": (NOW + dt.timedelta(hours=2)).isoformat(), "size": 1})
+    state["start_live_after"] = 300; scheduled.clear()
+    r13 = await e.async_run(hours=24); print("paused:", r13, "| scheduled resume in", scheduled)
+    assert r13["result"].startswith("paused") and scheduled == [archive.RESUME_AFTER_PAUSE]
+    state["live"] = False; state["start_live_after"] = None
+    r14 = await e.async_run(hours=24); print("resumed:", r14)
+    assert r14["saved"] >= 2
     print("PASS archive")
 
 asyncio.run(main())
