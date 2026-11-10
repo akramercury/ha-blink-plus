@@ -3,7 +3,6 @@
 from copy import deepcopy
 from datetime import timedelta
 import logging
-import time
 from typing import Any
 
 from blinkpy.blinkpy import Blink
@@ -43,6 +42,7 @@ from .const import (
 from .coordinator import BlinkConfigEntry, BlinkUpdateCoordinator
 from .archive import ClipArchiver
 from .auth import BlinkPlusAuth
+from .blinkpy_patches import apply_blinkpy_patches
 from .immis import BlinkLiveViewServer, live_key
 from .session import async_blink_session
 from .services import async_setup_services
@@ -130,7 +130,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: BlinkConfigEntry) -> boo
     blink.blink_plus_usb_poll_minutes = int(
         entry.options.get(CONF_USB_MOTION_MINUTES, DEFAULT_USB_MOTION_MINUTES)
     )
-    _patch_local_storage_uploads()
+    apply_blinkpy_patches()
     coordinator = BlinkUpdateCoordinator(hass, entry, blink)
 
     await coordinator.async_config_entry_first_refresh()
@@ -138,11 +138,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: BlinkConfigEntry) -> boo
     entry.runtime_data = coordinator
 
     await _async_start_live_servers(entry, coordinator)
-    coordinator.options_snapshot = dict(entry.options)
-    entry.async_on_unload(entry.add_update_listener(_async_options_updated))
+    try:
+        coordinator.options_snapshot = dict(entry.options)
+        entry.async_on_unload(entry.add_update_listener(_async_options_updated))
 
-    await _async_setup_archive(hass, entry, coordinator)
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+        await _async_setup_archive(hass, entry, coordinator)
+        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    except BaseException:
+        # A failed setup is not unloaded: free the listening ports ourselves,
+        # or the retry can't bind them again.
+        await _async_stop_live_servers(coordinator)
+        if coordinator.archiver is not None:
+            coordinator.archiver.shutdown()
+        raise
 
     # Run the first full (possibly slow) Blink refresh after setup has finished,
     # in the background, instead of inside setup.
@@ -163,7 +171,9 @@ async def _async_setup_archive(
     archiver = ClipArchiver(hass, coordinator, entry.entry_id, folder)
     await archiver.async_load()
     coordinator.archiver = archiver
-    entry.async_on_unload(archiver.cancel_resume)
+    # Unload: no new runs and no pending resume. A run still in progress
+    # finishes its current clip and then stops scheduling itself.
+    entry.async_on_unload(archiver.shutdown)
     for server in coordinator.live_servers.values():
         server.sync_busy = lambda: archiver.usb_busy
     if not hass.config.is_allowed_path(folder):
@@ -234,94 +244,6 @@ async def _async_options_updated(hass: HomeAssistant, entry: BlinkConfigEntry) -
     await hass.config_entries.async_reload(entry.entry_id)
 
 
-_PATCHED = False
-
-
-def _patch_local_storage_uploads() -> None:
-    """Stop blinkpy from uploading every new USB clip to the cloud on each poll.
-
-    blinkpy calls LocalStorageMediaItem.prepare_download() for each new clip in
-    the Sync Module 2 manifest, which makes the sync module upload it, one at a
-    time. That keeps the module "busy" (the app can't live view or play clips)
-    and isn't needed for motion detection, which only reads the manifest.
-    Only affects Blink Plus's own Blink instance, not the built-in integration.
-    """
-    global _PATCHED  # noqa: PLW0603
-    if _PATCHED:
-        return
-    try:
-        from blinkpy.sync_module import LocalStorageMediaItem  # noqa: PLC0415
-    except ImportError:
-        return
-    original = LocalStorageMediaItem.prepare_download
-
-    async def prepare_download(self, blink, *args, **kwargs):
-        if getattr(blink, "blink_plus_light_local_storage", False):
-            return None
-        return await original(self, blink, *args, **kwargs)
-
-    LocalStorageMediaItem.prepare_download = prepare_download
-
-    # Reading the USB clip list makes the sync module scan the drive, and while
-    # it does that the Blink app gets "system busy" when browsing saved clips.
-    from blinkpy.sync_module import BlinkSyncModule  # noqa: PLC0415
-
-    original_manifest = BlinkSyncModule.update_local_storage_manifest
-
-    async def update_local_storage_manifest(self, *args, **kwargs):
-        minutes = getattr(self.blink, "blink_plus_usb_poll_minutes", None)
-        if minutes is None:  # not ours (built-in Blink integration)
-            return await original_manifest(self, *args, **kwargs)
-        now = time.monotonic()
-        last = getattr(self, "_blink_plus_last_manifest", None)
-        if minutes <= 0 or (last is not None and now - last < minutes * 60):
-            self._local_storage["manifest_stale"] = True
-            return None
-        self._blink_plus_last_manifest = now
-        return await original_manifest(self, *args, **kwargs)
-
-    BlinkSyncModule.update_local_storage_manifest = update_local_storage_manifest
-
-    # blinkpy sends POST /network/{id}/update (a sync module *command*) on every
-    # poll and waits for it. The same armed/online state is already in the
-    # homescreen we fetch anyway, so read it from there.
-    original_network_info = BlinkSyncModule.get_network_info
-
-    async def get_network_info(self, *args, **kwargs):
-        if getattr(self.blink, "blink_plus_usb_poll_minutes", None) is None:
-            return await original_network_info(self, *args, **kwargs)
-        for net in (self.blink.homescreen or {}).get("networks", []) or []:
-            if str(net.get("id")) == str(self.network_id):
-                self.network_info = {
-                    "network": {
-                        "id": net.get("id"),
-                        "name": net.get("name"),
-                        "armed": net.get("armed"),
-                        "sync_module_error": False,
-                    }
-                }
-                return True
-        return await original_network_info(self, *args, **kwargs)
-
-    BlinkSyncModule.get_network_info = get_network_info
-
-    # blinkpy also asks every camera for live signal readings on each poll
-    # (GET /network/{n}/camera/{id}/signals). Temperature/battery/wifi are in
-    # the homescreen already.
-    from blinkpy.camera import BlinkCamera as _BlinkCamera  # noqa: PLC0415
-
-    original_sensor_info = _BlinkCamera.get_sensor_info
-
-    async def get_sensor_info(self, *args, **kwargs):
-        if getattr(self.sync.blink, "blink_plus_usb_poll_minutes", None) is None:
-            return await original_sensor_info(self, *args, **kwargs)
-        self.temperature_calibrated = self.temperature
-        return None
-
-    _BlinkCamera.get_sensor_info = get_sensor_info
-    _PATCHED = True
-
-
 @callback
 def _async_update_entry_data(
     hass: HomeAssistant, entry: BlinkConfigEntry, blink: Blink
@@ -346,7 +268,15 @@ async def async_unload_entry(hass: HomeAssistant, entry: BlinkConfigEntry) -> bo
     """Unload Blink entry."""
     unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unloaded:
-        for server in entry.runtime_data.live_servers.values():
-            await server.async_stop()
-        entry.runtime_data.live_servers.clear()
+        await _async_stop_live_servers(entry.runtime_data)
     return unloaded
+
+
+async def _async_stop_live_servers(coordinator: BlinkUpdateCoordinator) -> None:
+    """Stop every local live view server (ends running Blink sessions)."""
+    for server in list(coordinator.live_servers.values()):
+        try:
+            await server.async_stop()
+        except Exception:  # noqa: BLE001
+            _LOGGER.debug("Stopping live view server failed", exc_info=True)
+    coordinator.live_servers.clear()
