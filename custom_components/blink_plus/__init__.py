@@ -3,17 +3,21 @@
 from copy import deepcopy
 from datetime import timedelta
 import logging
+from pathlib import Path
 from typing import Any
 
 from blinkpy.blinkpy import Blink
 
 from homeassistant.components import persistent_notification
+from homeassistant.components.frontend import add_extra_js_url
+from homeassistant.components.http import StaticPathConfig
 from homeassistant.const import CONF_SCAN_INTERVAL
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryError
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.event import async_call_later, async_track_time_interval
 from homeassistant.helpers.typing import ConfigType
+from homeassistant.loader import async_get_integration
 
 from .const import (
     CONF_ARCHIVE_FOLDER,
@@ -44,8 +48,10 @@ from .archive import ClipArchiver
 from .auth import BlinkPlusAuth
 from .blinkpy_patches import apply_blinkpy_patches
 from .immis import BlinkLiveViewServer, live_key
+from .live_hold import async_stop_hold
 from .session import async_blink_session
 from .services import async_setup_services
+from .talk_view import BlinkTalkView
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -109,8 +115,23 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up Blink."""
 
     async_setup_services(hass)
+    hass.http.register_view(BlinkTalkView())
+    await _async_register_card(hass)
 
     return True
+
+
+TALK_CARD_URL = "/blink_plus/blink-plus-talk-card.js"
+
+
+async def _async_register_card(hass: HomeAssistant) -> None:
+    """Serve the talk card and load it on every dashboard (no resource needed)."""
+    path = Path(__file__).parent / "frontend" / "blink-plus-talk-card.js"
+    await hass.http.async_register_static_paths(
+        [StaticPathConfig(TALK_CARD_URL, str(path), cache_headers=False)]
+    )
+    version = (await async_get_integration(hass, DOMAIN)).version
+    add_extra_js_url(hass, f"{TALK_CARD_URL}?v={version}")
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: BlinkConfigEntry) -> bool:
@@ -276,6 +297,7 @@ async def _async_stop_live_servers(coordinator: BlinkUpdateCoordinator) -> None:
     """Stop every local live view server (ends running Blink sessions)."""
     for server in list(coordinator.live_servers.values()):
         try:
+            await async_stop_hold(server)
             await server.async_stop()
         except Exception:  # noqa: BLE001
             _LOGGER.debug("Stopping live view server failed", exc_info=True)

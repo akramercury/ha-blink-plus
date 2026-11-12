@@ -35,11 +35,17 @@
     "stop_live_view": {
       "service": "mdi:video-off"
     },
+    "start_live_view": {
+      "service": "mdi:video"
+    },
     "archive_clips": {
       "service": "mdi:folder-download"
     },
     "reset_archive": {
       "service": "mdi:folder-refresh"
+    },
+    "play_audio": {
+      "service": "mdi:account-voice"
     }
   }
 }

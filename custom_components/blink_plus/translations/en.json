@@ -98,6 +98,9 @@
     "integration_not_found": {
       "message": "Integration \"{target}\" not found in registry."
     },
+    "live_no_camera": {
+      "message": "Choose a Blink Plus camera to open its live view."
+    },
     "migration_reauth_required": {
       "message": "Cannot migrate configuration entry from version {version}, re-authentication is required"
     },
@@ -106,6 +109,27 @@
     },
     "not_loaded": {
       "message": "{target} is not loaded."
+    },
+    "talk_bad_audio": {
+      "message": "Could not play the audio: {error}"
+    },
+    "talk_busy": {
+      "message": "Someone is already talking to this camera."
+    },
+    "talk_failed": {
+      "message": "Two-way talk failed: {error}"
+    },
+    "talk_no_camera": {
+      "message": "Choose a Blink Plus camera for two-way talk."
+    },
+    "talk_no_file": {
+      "message": "Audio file {target} not found."
+    },
+    "talk_no_live_view": {
+      "message": "Two-way talk only works while the camera's live view is open. Open the live view first."
+    },
+    "talk_too_long": {
+      "message": "Two-way talk stopped after 60 seconds."
     }
   },
   "issues": {
@@ -174,6 +198,16 @@
       "name": "Stop live view",
       "description": "Ends the Blink live view session for this camera now (saves battery)."
     },
+    "start_live_view": {
+      "name": "Start live view",
+      "description": "Opens the camera's live view and keeps it open, so a player (dashboard, talk card, go2rtc) or play_audio finds it already running. Ends after the given time, on Stop live view, or at the live view time limit. Starting it again extends it. Returns per camera its state and, if the camera is in cool-down, how many seconds to wait.",
+      "fields": {
+        "seconds": {
+          "name": "Seconds",
+          "description": "How long to keep the live view open (cut to the live view time limit set in the options)."
+        }
+      }
+    },
     "archive_clips": {
       "name": "Archive clips",
       "description": "Copies new clips from the Sync Module USB drive to the archive folder (set in Blink Plus options). Pauses if a live view starts.",
@@ -191,6 +225,16 @@
     "reset_archive": {
       "name": "Reset clip archive",
       "description": "Forgets which clips were already copied to the current archive folder, so the next run copies them again (within the look-back window)."
+    },
+    "play_audio": {
+      "name": "Play audio",
+      "description": "Plays an audio file through the camera's speaker (two-way talk). Only works while the live view is open. At most 60 seconds.",
+      "fields": {
+        "file_path": {
+          "name": "File path",
+          "description": "Audio file to play (any format ffmpeg reads). Must be in an allowed folder, e.g. /media."
+        }
+      }
     }
   }
 }

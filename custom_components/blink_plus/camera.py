@@ -22,6 +22,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .const import DEFAULT_BRAND, DOMAIN
 from .coordinator import BlinkConfigEntry, BlinkUpdateCoordinator
 from .immis import BlinkLiveViewServer, live_key
+from .live_hold import async_stop_hold
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -81,6 +82,7 @@ class BlinkCamera(CoordinatorEntity[BlinkUpdateCoordinator], Camera):
         if self._live is not None:
             self._live.on_change = self._live_changed
             self._live.on_preempt = self._live_preempted
+            self._live.entity_id = self.entity_id
 
     @override
     async def async_will_remove_from_hass(self) -> None:
@@ -88,6 +90,7 @@ class BlinkCamera(CoordinatorEntity[BlinkUpdateCoordinator], Camera):
         if self._live is not None:
             self._live.on_change = None
             self._live.on_preempt = None
+            self._live.entity_id = None
         await super().async_will_remove_from_hass()
 
     def _live_preempted(self) -> None:
@@ -112,8 +115,11 @@ class BlinkCamera(CoordinatorEntity[BlinkUpdateCoordinator], Camera):
 
     async def stop_live_view(self) -> None:
         """End the live view session now (saves battery)."""
-        # Stop HA's own stream worker first, or it would reconnect at once and
-        # start a new Blink session.
+        # Stop whatever keeps it open first (start_live_view's hold, HA's own
+        # stream worker), or it would reconnect at once and start a new Blink
+        # session.
+        if self._live:
+            await async_stop_hold(self._live)
         if self.stream is not None:
             await self.stream.stop()
         if self._live:
@@ -212,14 +218,17 @@ class BlinkCamera(CoordinatorEntity[BlinkUpdateCoordinator], Camera):
         """Return a frame from the live view if one is running, else the thumbnail.
 
         We never start a live view just for a still: that would wake the camera
-        every time Apple Home or a dashboard refreshes.
+        every time Apple Home or a dashboard refreshes. Nor does a still keep a
+        running live view alive: grabs use ``still_url`` and don't count as
+        viewers, so the session ends when the last real viewer leaves.
         """
         if self._live is not None and self._live.stats.state == "streaming":
             try:
                 from homeassistant.components.ffmpeg import async_get_image  # noqa: PLC0415
 
+                # still_url: this grab must not keep the live view running.
                 image = await async_get_image(
-                    self.hass, self._live.url, width=width, height=height
+                    self.hass, self._live.still_url, width=width, height=height
                 )
                 if image:
                     return image
