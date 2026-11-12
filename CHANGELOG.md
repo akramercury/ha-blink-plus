@@ -2,6 +2,43 @@
 
 All notable changes to Blink Plus. The project follows [Semantic Versioning](https://semver.org/). It's pre-1.0, so options and behaviour may still change between minor versions.
 
+## [Unreleased]
+
+### Added
+- **Two-way talk** while a camera's live view is open, like in the Blink app:
+  - `blink_plus.play_audio` action: plays an audio file (any format ffmpeg reads, from an allowed folder) through the camera speaker. It runs alongside other camera actions, e.g. during a `camera.record`
+  - `POST /api/blink_plus/talk/<camera entity id>`: needs a login that may control the camera. ADTS AAC (AAC-LC, 16 kHz, mono) is played as it arrives; any other format ffmpeg reads (WebM/Opus from a browser, MP3, WAV, M4A …) is transcoded first
+  - one talker per camera at a time, at most 60 s per talk, and the speaker is always turned off again; a talk never carries over into a new live view session
+  - new camera attribute `live_view_talking`
+  - the talk sequence (token in the auth header, initial keepalive, speaker control 0x17, ack 0x18, audio 0x05) is adapted from [zperkd/blink-plus](https://github.com/zperkd/blink-plus) (MIT), where it was verified on a Blink Mini; see `NOTICE`
+- **Talk card** `custom:blink-plus-talk-card`, bundled with the integration and loaded automatically (no dashboard resource): live view with sound and a push-to-talk button for one or more cameras, English and German. Optional URL parameters `?camera=<entity>&live=1` pick a camera and start its live view, e.g. from a doorbell notification.
+  - It first wakes the camera with `start_live_view` and attaches the player only once the camera streams, so it also starts from cold in the Companion app.
+  - If the camera is in cool-down or the last try failed, it says so with the seconds left and tries again by itself, for up to 40 s. If the player shows no picture 15 s after it was attached, it is recreated once.
+  - The live view plays inside the dashboard (hls.js / WebRTC); `exoplayer: true` uses the Companion app's native player instead.
+- `blink_plus.start_live_view` action: opens a camera's live view and keeps it open for `seconds` (default 60, at most the live view time limit) or until `blink_plus.stop_live_view`. It connects like a player, so the Blink session is already streaming when the real player (or `play_audio`) comes. One hold per camera; calling it again extends it. Returns per camera `state`, `holding`, `seconds`, `cooldown_s` and `last_error`; a camera in cool-down is not touched.
+- CI job *Current Home Assistant*: imports every module under the newest Home Assistant and calls the actions through its service registry, so API changes in Home Assistant show up there first.
+- Diagnostics list which load reductions are active (`blinkpy_load_reductions`).
+
+### Changed
+- A live view opened with the live view token now sends the app's initial keepalive (seq 0) right after authenticating. Two-way talk needs it.
+- When Blink Plus mutes blinkpy's "possibly down or throttled" error while closing a live view command, it logs it at debug level together with the exception type and what caused it.
+
+### Fixed
+- **A live view no longer stays open after everyone has left** when dashboards or displays show the camera. While a live view runs, camera stills are taken from it; those grabs counted as viewers, and since cards fetch a still every few seconds, the session ran until the *Max live view minutes* limit and drained the battery. Still grabs now use their own URL (`…/stream.ts?still=1`), don't count as viewers (also not in `live_view_clients` / `live_view_viewers`) and never start a live view.
+- Closing a live view command no longer fails every time. After the IMMIS STOP, Blink has already ended the command and answers the `…/done` request with HTTP 404, which blinkpy reports as a connection error without text. Blink Plus now reads the status itself: 404 counts as closed, so there is one request instead of four, no retry and no blinkpy ERROR in the log. The legacy endpoint is only tried if the app's endpoint gives no usable answer.
+- `live_view_token_used` is set as soon as the live view streams. Before, it only showed after the session had ended.
+- Clip archive: a clip that keeps failing no longer blocks the archive. After 3 failed runs it is **skipped for good** (shown as `skipped_clips` on the Last archived clip sensor; `blink_plus.reset_archive` forgets it). Clips that failed before are tried last, so a few broken old clips can't keep newer ones from being copied, and the first full copy can complete.
+- Clip archive: a failed **cloud** clip is now counted and retried like a USB clip. Before, the first full copy could be marked complete with cloud clips missing.
+- Clip archive: auto-resume no longer starts a new series after giving up, until a run makes progress again. An account with no clip source at all reports the error once instead of retrying every 5 minutes.
+- Clip archive: unloading or reloading the entry stops the archiver. Before, a run still in progress could schedule a resume on the old instance.
+- Clip archive: a new run cancels a pending resume, and `next_auto_resume_s` is cleared when nothing is scheduled.
+- Clip archive: the clear "can't write to <folder>" message is no longer overwritten by the raw exception, and a failed refresh of the USB clip list no longer ends the whole run.
+- If setup fails after the live view servers started, their ports are freed, so the retry can bind them again.
+- A network error during a poll is a normal failed refresh (no "unexpected error" traceback).
+- The OAuth login hands its redirect-only connection back to the pool.
+- Live view: an IMMIS frame larger than 4 MB (stream out of sync) ends the session instead of being buffered.
+- Blink Plus no longer fails to load when a Home Assistant update changes blinkpy's internals. The load reductions (see *Being nice to your Sync Module*) replace four blinkpy methods; a renamed class or method used to stop the whole integration at setup. Now each one is optional: if it can't be applied, Blink Plus logs a warning and keeps working with blinkpy's normal behaviour for that part.
+
 ## [0.3.2] - 2026-10-22
 
 ### Fixed

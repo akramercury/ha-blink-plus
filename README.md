@@ -32,6 +32,7 @@ It speaks Blink's own live view protocol (**IMMIS**), reverse engineered from th
 |---|---|
 | 🎥 **Live view** | Outdoor / Indoor (Sync Module), Mini and Video Doorbell, including the new v6 live view API and `liveview_token` |
 | 🍎 **Apple Home & Apple TV** | Through HA's HomeKit Bridge. Doorbells can pop up picture-in-picture on Apple TV |
+| 🗣️ **Two-way talk** | Speak through the camera while its live view is open: play an audio file with an action, or stream audio to an authenticated endpoint |
 | 🔁 **Seamless sessions** | Blink ends live views after a short time limit. Blink Plus continues with `extended_liveview`, like tapping *Continue* in the app |
 | 🧠 **Sync-module friendly** | One live view per system, no polling during live view, no background USB scans, never retries a failing camera. The Blink app keeps working |
 | 🔐 **Login that works in 2026** | OAuth v2 + PKCE, 2FA (email/SMS), per-install device ID, token refresh, and clear error messages |
@@ -139,6 +140,18 @@ The share now appears inside Home Assistant as `/media/blink`.
 
 Then press **Archive clips now** (on the *Blink Plus* device) for a first run, or wait for the schedule. **The first run into a folder copies everything** on the USB stick and in the cloud. After that only new clips are copied. Changed folders? The new folder gets its own full copy. To copy everything again into the same folder, run `blink_plus.reset_archive`. The **Last archived clip** sensor shows progress, counts, the last file and any error.
 
+**When a clip can't be copied** (sync module busy, clip list expired, Blink returns an error, the folder isn't writable), the run skips it and carries on. Runs resume by themselves: 2 min after a live view interrupted them, 5 min after an error, 30 s later when more clips are waiting. A clip that fails is retried in the next runs, after the clips that haven't failed yet. After **3 failed runs** it is skipped for good, so one broken clip can't hold up the rest (or keep the first full copy from finishing). `blink_plus.reset_archive` forgets skipped clips too. If no run makes progress after 12 automatic resumes, it waits for the next scheduled run. An account with neither cloud clips nor USB storage reports that once and isn't retried.
+
+| *Last archived clip* attribute | Meaning |
+|---|---|
+| `status` | `idle`, `running`, `running (first full copy)` |
+| `last_run` / `last_result` | When the last run ended and what it did (e.g. `done (cloud: 2 new)`, `paused: a live view started`, `error`) |
+| `saved_last_run` / `saved_total` | Clips copied in the last run / into this folder overall |
+| `last_clip_camera` / `last_clip_path` | Camera and file of the newest copied clip |
+| `last_error` | Why the last clip or run failed, e.g. `clip 123: download HTTP 500` or `can't write to /media/blink/...` |
+| `next_auto_resume_s` | Seconds until the next automatic resume, empty if none is scheduled |
+| `skipped_clips` | Clips skipped for good after 3 failed runs |
+
 > [!TIP]
 > No subscription? Copying from the USB stick uses the sync module, so the Blink app may briefly say *"system busy"* while a clip is being copied. Running every 60 minutes (or overnight with an automation calling `blink_plus.archive_clips`) keeps that out of your way.
 
@@ -197,6 +210,137 @@ Restart, pair each accessory with the code from the HA notification (Home app �
 > [!NOTE]
 > HA's built-in HomeKit Bridge (UI-configured) can hold at most 150 accessories. If you see *"would exceed the 150 device limit"*, filter that bridge so it doesn't also include the Blink Plus entities.
 
+## Two-way talk
+
+Talk works like in the Blink app: **only while the camera's live view is open** (someone is watching it in HA, HomeKit, go2rtc …, or `blink_plus.start_live_view` opened it). It rides that live view session; Blink Plus never wakes a camera on its own just to talk. One person talks to a camera at a time, and one talk ends after **60 seconds**.
+
+**Open the live view first** with `blink_plus.start_live_view`. It connects to the camera's live view like a player and keeps it open for `seconds` (default 60, at most the *live view time limit*), or until `blink_plus.stop_live_view`. Calling it again extends that time; there is one such hold per camera. It returns per camera `state`, `holding`, `seconds` left, `cooldown_s` and `last_error`. If `cooldown_s` is above 0, the camera is in cool-down (another camera on the same sync module just took over, it hit the time limit, or the last try failed) and nothing was opened; try again after that many seconds.
+
+```yaml
+# doorbell pressed: wake the camera, wait until it streams, then speak
+- action: blink_plus.start_live_view
+  target:
+    entity_id: camera.front_door
+  data:
+    seconds: 90
+- wait_template: "{{ is_state_attr('camera.front_door', 'live_view_state', 'streaming') }}"
+  timeout: 40
+  continue_on_timeout: false
+- action: blink_plus.play_audio
+  target:
+    entity_id: camera.front_door
+  data:
+    file_path: /media/sounds/be_right_there.mp3
+```
+
+**Play a sound or a recorded message** (any format ffmpeg reads, from an [allowed folder](https://www.home-assistant.io/integrations/homeassistant/#allowlist_external_dirs) such as `/media`):
+
+```yaml
+action: blink_plus.play_audio
+target:
+  entity_id: camera.front_door
+data:
+  file_path: /media/sounds/be_right_there.mp3
+```
+
+**Talk from a dashboard** with the bundled card. It shows the live view with sound and a push-to-talk button (walkie-talkie style: hold, speak, release; the visitor hears you about a second later). It is loaded automatically, no resource needed:
+
+```yaml
+type: custom:blink-plus-talk-card
+title: Front door
+cameras:
+  - entity: camera.front_door
+    name: Front door
+  - camera.driveway
+```
+
+- Press **Live with sound** to open the live view (it doesn't start on its own, so opening the dashboard never wakes a camera). Unmute with the speaker icon in the picture.
+- The card wakes the camera with `start_live_view` first and attaches the player only once the camera streams; a battery camera needs 5–16 s to wake, and a player that starts cold often gives up before the stream exists. While the card shows the live view it keeps renewing that hold; **Hang up** ends it.
+- If the camera is in cool-down, the card says so (*Camera busy (another live view on the same sync module), retrying in N s*, or why the last try failed) and tries again by itself when the cool-down is over, for up to 40 s. If the player shows no picture 15 s after it was attached, the card recreates it once.
+- The live view plays inside the dashboard (hls.js or WebRTC), also in the Companion app, so the card can tell whether a picture arrived. `exoplayer: true` in the card config uses the Companion app's native Android player (ExoPlayer) instead.
+- Browsers only allow the microphone in a **secure context**: open Home Assistant over `https://` (in the Companion app, use the https address at home too). Over plain `http://` the card still shows the live view with sound, but can't record.
+- For a doorbell notification, link to the dashboard view with `?camera=camera.front_door&live=1`: the card picks that camera and starts the live view right away.
+- The recording goes to the endpoint below, so the user needs control permission for the camera, not admin rights.
+
+<details>
+<summary><b>Example: the doorbell rings, you tap the notification and talk</b></summary>
+
+A dashboard *Intercom* (URL `dashboard-intercom`) with a view `door` that holds the card:
+
+```yaml
+views:
+  - title: Door
+    path: door
+    cards:
+      - type: custom:blink-plus-talk-card
+        title: Front door
+        cameras:
+          - entity: camera.front_door
+            name: Front door
+          - entity: camera.yard
+            name: Yard
+```
+
+An automation that wakes the doorbell camera when it rings and sends a notification that opens this view:
+
+```yaml
+alias: Doorbell – talk card
+triggers:
+  - trigger: state
+    entity_id: binary_sensor.front_door_motion  # your doorbell sensor
+    to: "on"
+actions:
+  # Optional: wake the camera now, so the live view is already running when
+  # you tap the notification (the card would otherwise wait 5–16 s for it).
+  # It ends after 90 s if nobody opens it.
+  - action: blink_plus.start_live_view
+    target:
+      entity_id: camera.front_door
+    data:
+      seconds: 90
+  - action: notify.mobile_app_my_phone
+    data:
+      title: Doorbell
+      message: Someone is at the front door
+      data:
+        image: /api/camera_proxy/camera.front_door
+        url: /dashboard-intercom/door?camera=camera.front_door&live=1          # iOS
+        clickAction: /dashboard-intercom/door?camera=camera.front_door&live=1  # Android
+```
+
+Tap the notification: the card opens on the front door and starts the live view with sound. Unmute with the speaker icon if needed, hold **Hold to talk**, speak, release. **Hang up** ends the live view.
+</details>
+
+**Talk card in the Companion app.** At home, the app switches to its *internal URL* (often `http://homeassistant.local:8123`); on the road it uses the external one. Two things follow from that:
+
+- **Talking needs https on both addresses.** The Android and iOS web views only allow the microphone in a secure context. Over an `http://` internal URL you can watch and listen, but the talk button can't record.
+- **The card can be missing on just one of the two addresses** (*Custom element does not exist: blink-plus-talk-card*). The card is loaded together with the Home Assistant page, and the app keeps its own cached page per address. One cached from before Blink Plus was installed or updated doesn't know the card yet. See [Troubleshooting](#troubleshooting).
+
+So give the app an https address for home too; how you set that up is up to you. The quickest way: in the app, *Settings → Companion app → (your server)*, clear the internal URL, so the app uses its external https address everywhere, then *Troubleshooting → Reset frontend cache*.
+
+**Send audio** to `POST /api/blink_plus/talk/<camera entity id>`. It needs a Home Assistant login (e.g. a [long-lived access token](https://developers.home-assistant.io/docs/auth_api/#long-lived-access-token)) whose user may control that camera.
+
+- **ADTS AAC (AAC-LC, 16 kHz, mono)** is played as it arrives, so it can be a live stream.
+- **Any other format** ffmpeg reads (WebM/Opus from a browser recording, MP3, WAV, M4A …) is read completely first (max. 8 MB, 60 s) and then transcoded.
+
+```bash
+ffmpeg -i message.wav -ac 1 -ar 16000 -c:a aac -b:a 32k -f adts - | \
+  curl -H "Authorization: Bearer $HA_TOKEN" --data-binary @- \
+    http://homeassistant.local:8123/api/blink_plus/talk/camera.front_door
+```
+
+| Answer | Meaning |
+|---|---|
+| `200` `{"frames": …, "seconds": …}` | Played |
+| `400` | Not readable as audio (or ADTS that isn't AAC-LC 16 kHz mono), empty, larger than 8 MB, or the upload broke off |
+| `403` / `404` | No permission for that camera / not a Blink Plus camera |
+| `408` | Longer than 60 seconds (the rest was cut off) |
+| `409` | Someone else is talking to this camera |
+| `503` | No open live view, the camera didn't acknowledge, or the live view ended |
+
+> [!NOTE]
+> Talk needs the live view token (*Live view auth token*: `auto` or `token`). The talk sequence comes from [zperkd/blink-plus](https://github.com/zperkd/blink-plus), where it was verified on a Blink Mini. Other models are untested; please report how it goes. While talking, the camera's `live_view_talking` attribute is `true`.
+
 ## go2rtc · Frigate · VLC
 
 Set **Live view listen address** to `0.0.0.0` and a fixed **First live view TCP port** (e.g. `18550`). Each camera's URL is in its `live_view_url` attribute.
@@ -227,6 +371,8 @@ A Blink Sync Module can only do **one job at a time**. If it's busy, the Blink a
 | Regular polling | Reads Blink's cloud homescreen only. No sync module commands, no per-camera signal requests, no USB clip uploads |
 | USB clip list | Not read unless you enable it |
 
+The polling savings come from replacing four blinkpy methods, only for Blink Plus's own connection (the built-in Blink integration is not affected). blinkpy ships with Home Assistant, so an HA update can change it. If one of these methods is gone, Blink Plus logs a warning like *"blinkpy has no … Blink Plus keeps working without this load reduction"* and uses blinkpy's normal behaviour for that part: everything still works, the sync module just gets a little more traffic. Diagnostics show which reductions are active (`blinkpy_load_reductions`).
+
 After you close a camera in HA, it's released within about **35 seconds** (HA keeps its player alive ~30 s, plus the 5 s linger). If the Blink app says busy right after you close a camera, wait that long.
 
 ## Entities, actions and attributes
@@ -235,7 +381,9 @@ After you close a camera in HA, it's released within about **35 seconds** (HA ke
 
 | Action | |
 |---|---|
-| `blink_plus.stop_live_view` | End a camera's live view now |
+| `blink_plus.start_live_view` | Open a camera's live view and keep it open (`seconds`, default 60, at most the live view time limit) so players and talk find it warm; returns state and cool-down. See [Two-way talk](#two-way-talk) |
+| `blink_plus.stop_live_view` | End a camera's live view now (also ends `start_live_view`) |
+| `blink_plus.play_audio` | Play an audio file through the camera speaker (`file_path`); only while its live view is open, max. 60 s. Runs alongside other camera actions. See [Two-way talk](#two-way-talk) |
 | `blink_plus.archive_clips` | Copy new clips to the archive folder now (`hours`, `max_clips`); returns a summary |
 | `blink_plus.reset_archive` | Forget what was copied to the current folder; the next run copies everything again |
 | `blink_plus.trigger_camera` | Take a new snapshot (wakes the camera) |
@@ -249,9 +397,21 @@ After you close a camera in HA, it's released within about **35 seconds** (HA ke
 | `live_view_last_error` | Why the last attempt failed (Blink's message, or "camera sent no video …") |
 | `live_view_cooldown_s` | Seconds before this camera may start again |
 | `live_view_viewers` | Who is connected to the stream right now |
+| `live_view_talking` | `true` while someone talks through the camera |
 | `live_view_url` | Local MPEG-TS URL for go2rtc / VLC |
 
 ## Troubleshooting
+
+<details>
+<summary><b>"Custom element does not exist: blink-plus-talk-card"</b></summary>
+
+The card ships with the integration and is loaded with the Home Assistant page, so the page has to be loaded fresh once after installing or updating Blink Plus.
+
+* Browser: reload the page (Ctrl+Shift+R / Cmd+Shift+R).
+* Companion app: *Settings → Companion app → Troubleshooting → Reset frontend cache*, or close and reopen the app.
+* Only at home in the app? The app uses its internal URL there and has its own cached page for it. See [Talk card in the Companion app](#two-way-talk).
+* Please don't add the card as a dashboard resource as a workaround. A resource with `?v=…` stays on that version after the next update, and the old card may stay active. If you added one, remove it once the card loads again.
+</details>
 
 <details>
 <summary><b>"Invalid authentication" when signing in</b></summary>
@@ -288,7 +448,7 @@ logger:
     custom_components.blink_plus: debug
 ```
 
-**Settings → Devices & services → Blink Plus → ⋮ → Download diagnostics** gives each camera's live view state and the last 150 Blink API calls. Tokens, serials and email are redacted. Please attach it to [bug reports](https://github.com/akramercury/ha-blink-plus/issues/new/choose).
+**Settings → Devices & services → Blink Plus → ⋮ → Download diagnostics** gives each camera's live view state, the last 150 Blink API calls and which blinkpy load reductions are active. Tokens, serials and email are redacted. Please attach it to [bug reports](https://github.com/akramercury/ha-blink-plus/issues/new/choose).
 </details>
 
 ## Roadmap
@@ -299,16 +459,19 @@ logger:
 - [ ] **Push notifications** (Firebase, like the app): instant doorbell press events and motion/person/vehicle detection, without polling
 - [x] Clip archive to a folder / PC (cloud and USB)
 - [ ] Snooze, chime test, lights, Mini-as-chime
-- [ ] Two-way talk
+- [x] Two-way talk (during live view: `blink_plus.play_audio`, an authenticated audio endpoint and a push-to-talk dashboard card)
+- [x] Open a live view from an automation (`blink_plus.start_live_view`)
+- [ ] Two-way talk from the dashboard (microphone button)
 
 ## Development
 
-The live view engine has offline tests that run against a fake Blink IMMIS relay and real ffmpeg, so no Blink account is needed. See [`tests/`](tests/). Every push runs them in CI, together with HACS and hassfest validation.
+The live view engine and two-way talk have offline tests that run against a fake Blink IMMIS relay and real ffmpeg, so no Blink account is needed. See [`tests/`](tests/). Every push runs them in CI, together with HACS and hassfest validation.
 
 ## Credits & disclaimer
 
 * Based on Home Assistant's [`blink`](https://www.home-assistant.io/integrations/blink/) integration (Apache-2.0) and [blinkpy](https://github.com/fronzbot/blinkpy) (MIT). IMMIS framing was first documented by blinkpy and blink-liveview-middleware.
 * Endpoint, token and protocol details come from the Blink Android app 60.0 (see [`docs/blink-api-map.md`](docs/blink-api-map.md)).
+* The two-way talk sequence and the ADTS handling are adapted from [zperkd/blink-plus](https://github.com/zperkd/blink-plus) (MIT).
 
 **Blink Plus is an independent community project. It isn't affiliated with, endorsed by or sponsored by Blink or Amazon.** "Blink" is a trademark of Amazon.com, Inc. or its affiliates. The project uses an unofficial API that can change at any time. Use it at your own risk.
 
